@@ -18,6 +18,9 @@ import {
   Clock,
   PlayCircle,
   ExternalLink,
+  ArrowRightLeft,
+  AlertTriangle,
+  ShieldCheck,
 } from "lucide-react";
 import Modal from "@/components/Modal";
 import { useApp } from "@/context/AppContext";
@@ -59,6 +62,11 @@ export default function CollaboratorsPage() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [selectedCollaborator, setSelectedCollaborator] = useState<Collaborator | null>(null);
+
+  // Delete handling states
+  const [deleteMode, setDeleteMode] = useState<"reassign" | "cascade">("reassign");
+  const [reassignToId, setReassignToId] = useState("");
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Projects Preview Modal
   const [isProjectsModalOpen, setIsProjectsModalOpen] = useState(false);
@@ -111,6 +119,15 @@ export default function CollaboratorsPage() {
 
   const openDeleteModal = (c: Collaborator) => {
     setSelectedCollaborator(c);
+    const others = collaborators.filter((other) => other.id !== c.id);
+    if (c.totalProjects > 0 && others.length > 0) {
+      setDeleteMode("reassign");
+      setReassignToId(others[0].id);
+    } else {
+      setDeleteMode("cascade");
+      setReassignToId("");
+    }
+    setDeleteError(null);
     setIsDeleteModalOpen(true);
   };
 
@@ -194,11 +211,24 @@ export default function CollaboratorsPage() {
 
   const handleDelete = async () => {
     if (!selectedCollaborator) return;
+    setDeleteError(null);
+
+    const hasProjects = selectedCollaborator.totalProjects > 0;
+    if (hasProjects && deleteMode === "reassign" && !reassignToId) {
+      setDeleteError("Please select a collaborator to receive the projects.");
+      return;
+    }
+
     setFormSubmitting(true);
 
     try {
       const res = await fetch(`/api/collaborators/${selectedCollaborator.id}`, {
         method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: deleteMode,
+          reassignToId: deleteMode === "reassign" ? reassignToId : undefined,
+        }),
       });
 
       const data = await res.json();
@@ -206,13 +236,15 @@ export default function CollaboratorsPage() {
         throw new Error(data.error || "Failed to delete collaborator");
       }
 
-      setSuccessMessage("Collaborator removed successfully.");
+      setSuccessMessage(data.message || "Collaborator removed successfully.");
       setIsDeleteModalOpen(false);
       fetchCollaborators();
       setTimeout(() => setSuccessMessage(null), 4000);
     } catch (err: unknown) {
       if (err instanceof Error) {
-        alert(err.message);
+        setDeleteError(err.message);
+      } else {
+        setDeleteError("Failed to delete collaborator");
       }
     } finally {
       setFormSubmitting(false);
@@ -729,9 +761,131 @@ export default function CollaboratorsPage() {
             {t("deleteCollabConfirm")}{" "}
             <strong className="text-slate-900 dark:text-slate-100">{selectedCollaborator?.username}</strong>?
           </p>
-          <div className="p-3 bg-amber-50 dark:bg-amber-950/40 rounded-xl border border-amber-200 dark:border-amber-900/60 text-amber-800 dark:text-amber-300 text-xs">
-            {t("deleteCollabWarning")}
-          </div>
+
+          {deleteError && (
+            <div className="p-3 bg-rose-50 dark:bg-rose-950/40 rounded-xl border border-rose-200 dark:border-rose-900/60 text-rose-800 dark:text-rose-300 text-xs flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{deleteError}</span>
+            </div>
+          )}
+
+          {selectedCollaborator && selectedCollaborator.totalProjects === 0 ? (
+            <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 rounded-xl border border-emerald-200 dark:border-emerald-900/60 text-emerald-800 dark:text-emerald-300 text-xs flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              <span>{t("noProjectsToDeleteCollab")}</span>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                {selectedCollaborator?.totalProjects} {t("navProjects")} &bull; Action:
+              </div>
+
+              {/* Option 1: Reassign */}
+              <div
+                onClick={() => {
+                  const others = collaborators.filter((other) => other.id !== selectedCollaborator?.id);
+                  if (others.length > 0) {
+                    setDeleteMode("reassign");
+                    if (!reassignToId) setReassignToId(others[0].id);
+                  }
+                }}
+                className={`p-3.5 rounded-xl border cursor-pointer transition ${
+                  deleteMode === "reassign"
+                    ? "border-indigo-500 bg-indigo-50/50 dark:bg-indigo-950/20 ring-1 ring-indigo-500/20"
+                    : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700"
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <input
+                    type="radio"
+                    name="deleteMode"
+                    checked={deleteMode === "reassign"}
+                    onChange={() => {
+                      const others = collaborators.filter((other) => other.id !== selectedCollaborator?.id);
+                      if (others.length > 0) {
+                        setDeleteMode("reassign");
+                        if (!reassignToId) setReassignToId(others[0].id);
+                      }
+                    }}
+                    className="mt-0.5 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <div className="flex-1 space-y-1">
+                    <div className="flex items-center gap-1.5 font-semibold text-xs text-slate-900 dark:text-slate-100">
+                      <ShieldCheck className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                      <span>{t("deleteOptionReassignTitle")}</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                      {t("deleteOptionReassignDesc")}
+                    </p>
+
+                    {deleteMode === "reassign" && (
+                      <div className="pt-2">
+                        {collaborators.filter((c) => c.id !== selectedCollaborator?.id).length > 0 ? (
+                          <div className="space-y-1">
+                            <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300">
+                              {t("reassignToLabel")}
+                            </label>
+                            <select
+                              value={reassignToId}
+                              onChange={(e) => setReassignToId(e.target.value)}
+                              className="w-full px-3 py-2 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                            >
+                              {collaborators
+                                .filter((c) => c.id !== selectedCollaborator?.id)
+                                .map((other) => (
+                                  <option key={other.id} value={other.id}>
+                                    {other.username} ({other.email}) - {other.totalProjects} {t("navProjects")}
+                                  </option>
+                                ))}
+                            </select>
+                          </div>
+                        ) : (
+                          <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                            {t("noOtherCollabsWarning")}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Option 2: Cascade */}
+              <div
+                onClick={() => setDeleteMode("cascade")}
+                className={`p-3.5 rounded-xl border cursor-pointer transition ${
+                  deleteMode === "cascade"
+                    ? "border-rose-500 bg-rose-50/50 dark:bg-rose-950/20 ring-1 ring-rose-500/20"
+                    : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700"
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <input
+                    type="radio"
+                    name="deleteMode"
+                    checked={deleteMode === "cascade"}
+                    onChange={() => setDeleteMode("cascade")}
+                    className="mt-0.5 text-rose-600 focus:ring-rose-500"
+                  />
+                  <div className="flex-1 space-y-1">
+                    <div className="flex items-center gap-1.5 font-semibold text-xs text-rose-600 dark:text-rose-400">
+                      <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+                      <span>{t("deleteOptionCascadeTitle")}</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                      {t("deleteOptionCascadeDesc")}
+                    </p>
+                    {deleteMode === "cascade" && (
+                      <div className="mt-2 p-2 rounded-lg bg-rose-100/50 dark:bg-rose-950/40 text-[11px] text-rose-700 dark:text-rose-300">
+                        {t("deleteCollabWarning")}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="pt-2 flex items-center justify-end gap-2 border-t border-slate-100 dark:border-slate-800">
             <button
               type="button"
@@ -742,10 +896,15 @@ export default function CollaboratorsPage() {
             </button>
             <button
               type="button"
-              disabled={formSubmitting}
+              disabled={formSubmitting || (deleteMode === "reassign" && (selectedCollaborator?.totalProjects ?? 0) > 0 && !reassignToId)}
               onClick={handleDelete}
-              className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-70 transition cursor-pointer"
+              className={`px-4 py-2 rounded-xl text-xs font-semibold text-white transition flex items-center gap-1.5 cursor-pointer disabled:opacity-60 ${
+                deleteMode === "reassign" && (selectedCollaborator?.totalProjects ?? 0) > 0
+                  ? "bg-indigo-600 hover:bg-indigo-700"
+                  : "bg-rose-600 hover:bg-rose-700"
+              }`}
             >
+              <Trash2 className="w-3.5 h-3.5" />
               {formSubmitting ? "..." : t("deleteCollabBtn")}
             </button>
           </div>
